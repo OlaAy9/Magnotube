@@ -1,7 +1,7 @@
 close all;
 clear all;
 clc;
-s = serialport("COM10", 1500000, "Timeout", 3, "ByteOrder", "little-endian");
+s = serialport("COM5", 1500000, "Timeout", 3, "ByteOrder", "little-endian");
 configureTerminator(s, "CR/LF");
 pause(2);
 flush(s);
@@ -54,7 +54,7 @@ q4 = quiver3( ...
     'AutoScale', 'on', ...
     'AutoScaleFactor', 0.4, ...
     'LineWidth', 1 ...
-);
+    );
 xlim([0.5, 8.5]); ylim([0.5, 8.5]); zlim([0.5, 1.5]);
 xlabel('y');
 ylabel('x');
@@ -119,11 +119,10 @@ title('Position des Tubus in der Trachea')
 startX = 753;
 startY = 753;
 
-%--- Kalibrierung und Mapping Vorbereitungen--- 
+%--- Kalibrierung und Mapping Vorbereitungen---
 %Startposition vorerst
 calibrated = false;
-maxX_ref = 0;
-maxY_ref = 0;
+O_TE_ref = [NaN NaN NaN]; %vorher Magnetfeldmaximum gespeichert, jetzt die berechneten Positionen xyz
 
 imageCenterX = startX;
 imageCenterY = startY;
@@ -142,7 +141,7 @@ trailPx = nan(1, traillength);
 trailPy = nan(1, traillength);
 h_trail = scatter(nan, nan, 20, 'k', 'filled');
 
-% Alarm-Kreis 
+% Alarm-Kreis
 theta = linspace(0,2*pi,50);
 r = 160; % Erlaubter Radius in Pixeln
 h_circle = fill( ...
@@ -200,7 +199,9 @@ freq = zeros(50,1);
 also_zero = false;
 
 while(1)
-    tic;
+
+   tic;
+%pause(0.25);
 
 
     if (b1.Value == true || b3.Value == true) % Magnetic Reset
@@ -227,82 +228,84 @@ while(1)
     end
 
 
-% Daten anfordern
-writeline(s, "measurement read 0-63");
+    % Daten anfordern
+ % pause(0.1);
+    writeline(s, "measurement read 0-63");
 
-expectedBytes = 256 * 4;  % 256 single-Werte mit je 4 Bytes
-timeout = 3;              % Sekunden
-timedOut = false;         % timedOut flag   
-t_receive = tic;
+    expectedBytes = 256 * 4;  % 256 single-Werte mit je 4 Bytes
+    timeout = 1;              % Sekunden
+    timedOut = false;         % timedOut flag
+    t_receive = tic;
 
-%Daten einlesen
-while s.NumBytesAvailable < 1024
-    if toc(t_receive) >= timeout
-        fprintf("\n--- Empfangsdiagnose ---\n");
-        fprintf("Zeit: %.3f s\n", toc(t_receive));
-        fprintf("Bytes im Puffer: %d\n", s.NumBytesAvailable);
+    %Daten einlesen
+    while s.NumBytesAvailable < expectedBytes + 6
+        if toc(t_receive) >= timeout
+            fprintf("\n--- Empfangsdiagnose ---\n");
+            fprintf("Zeit: %.3f s\n", toc(t_receive));
+            fprintf("Bytes im Puffer: %d\n", s.NumBytesAvailable);
 
-        % Bereits vorhandene Bytes sichern
-        n = s.NumBytesAvailable;
-        if n > 0
-            raw = read(s, n, "uint8");
-            fprintf("Erste Bytes (hex): ");
-            fprintf("%02X ", raw(1:min(20, numel(raw))));
-            fprintf("\n");
-        end
+            % Bereits vorhandene Bytes sichern
+            n = s.NumBytesAvailable;
+            if n > 0
+                raw = read(s, n, "uint8");
+                fprintf("Erste Bytes (hex): ");
+                fprintf("%02X ", raw(1:min(20, numel(raw))));
+                fprintf("\n");
+            end
 
-        warning("Messdaten unvollständig empfangen.");
-        %Reset ausführen
-        writeline(s, "reset");
-        ack = readline(s);
-        disp("ACK reset: " + strtrim(ack));
+            warning("Messdaten unvollständig empfangen.");
+            %Reset ausführen
+            writeline(s, "reset");
+            ack = readline(s);
+            disp("ACK reset: " + strtrim(ack));
 
-        if strcmp(strtrim(ack), "Done")
-            fprintf("Magnetic reset successful\n");
-        else
-            fprintf("Error during magnetic reset: %s\n", strtrim(ack));
+            if strcmp(strtrim(ack), "Done")
+                fprintf("Magnetic reset successful\n");
+            else
+                fprintf("Error during magnetic reset: %s\n", strtrim(ack));
+                break;
+            end
+            flush(s);
+            timedOut = true;
             break;
         end
-        flush(s);
-        timedOut = true;
-        break;
+
+        pause(0.05);
     end
 
-    pause(0.05);
-end
+    if timedOut
+        continue;
+    end
+    bytesBeforeRead = s.NumBytesAvailable;
+    fprintf("Bytes vor dem Lesen: %d\n", bytesBeforeRead);
 
-if timedOut
-    continue;
-end
-bytesBeforeRead = s.NumBytesAvailable;
-fprintf("Bytes vor dem Lesen: %d\n", bytesBeforeRead);
+    % Genau 256 single-Werte einlesen
+    data = read(s, 256, "single");
 
-% Genau 256 single-Werte einlesen
-data = read(s, 256, "single");
+    fprintf("Messwerte eingelesen: %d\n", numel(data));
 
-fprintf("Messwerte eingelesen: %d\n", numel(data));
+    % Abschlussbestätigung lesen
+    ack = strtrim(readline(s));
+    disp("ACK measurement read: " + ack);
 
-% Abschlussbestätigung lesen
-ack = strtrim(readline(s));
-disp("ACK measurement read: " + ack);
+    if ~strcmp(ack, "Done")
+        error("Protocol error after measurement read. ACK = '%s'", ack);
+    end
 
-if ~strcmp(ack, "Done")
-    error("Protocol error after measurement read. ACK = '%s'", ack);
-end
+    % Nächste Messung starten
+    writeline(s, "measurement start 0-63");
+    ack = strtrim(readline(s));
+    disp("ACK measurement start: " + ack);
 
-% Nächste Messung starten
-writeline(s, "measurement start 0-63");
-ack = strtrim(readline(s));
-disp("ACK measurement start: " + ack);
-
-if ~strcmp(ack, "Done")
-    error("Protocol error after measurement start. ACK = '%s'", ack);
-end
+    if ~strcmp(ack, "Done")
+        error("Protocol error after measurement start. ACK = '%s'", ack);
+    end
 
     % Daten umformatieren
     data_matrix = reshape(data, 4, 64);
 
     if (b2.Value == true || also_zero == true) % Zero
+        calibrated = false;
         vx_ref = data_matrix(1, :);
         vy_ref = data_matrix(2, :);
         vz_ref = data_matrix(3, :);
@@ -320,22 +323,64 @@ end
     vy = data_matrix(2, :) - vy_ref;
     vz = data_matrix(3, :) - vz_ref;
 
+
+    counter = counter + 1; % zählt jede eingelesene Messung, 
+% um die erste Ortungsberechnung zu erkennen und die xyz regelmäßig
+% auszugeben
+
     % In 8×8 Matrizen umformen
     X = fliplr(reshape(vx, 8, 8)).';
     Y = fliplr(reshape(vy, 8, 8)).';
     Z = fliplr(reshape(-vz, 8, 8)).';
 
+    % --- Neue 3D-Positionsbestimmung mit Ortung_TE ---
+    %Magnetfeldwerte aller 64 Sensoren mit BxByBz
+    % 64 Sensoren mit jeweils Bx, By, Bz
+    % Testannahme: Messwerte liegen in Mikrotesla vor
+    B_mess = [reshape(X.', 64, 1), ...
+        reshape(Y.', 64, 1), ...
+        reshape(Z.', 64, 1)] * 1e-6; 
+
+    % Die Ortung funktion so oft aufrufen, um die Positionsschätzung zu optimieren
+    % Mehrere TE-Optimierungsschritte pro Messung
+    %O_TE = xyz in mm, 
+    for schritt = 1:500
+      [O_TE, ~, fehler_TE, ~] = Ortung_TE( ...
+           B_mess, false);
+    end
+%[O_TE, ~, fehler_TE, ~] = Ortung_TE( ...
+        %   B_mess, counter ==1);
+%[O_TE, ~, fehler_TE, ~] = Ortung_TE(  B_mess, false);
+    % Pruefen, ob die TE-Ortung brauchbar(logisch) ist
+    feld_RMS_TE = sqrt(mean(B_mess(:).^2));
+
+    TE_ok = feld_RMS_TE > 1e-7 && ...
+       all(isfinite(O_TE)) && ...
+        fehler_TE < 0.10 * feld_RMS_TE;
+%TE_ok =1;
+    % XYZ-Ergebnis alle 10 Messungen ausgeben
+    if mod(counter, 10) == 0
+        fprintf('TE-Ortung: X = %.2f mm, Y = %.2f mm, Z = %.2f mm, RMS = %.2f uT\n', ...
+            O_TE(1), O_TE(2), O_TE(3), fehler_TE * 1e6);
+    end
     % Betrag errechnen
     V = sqrt(X.^2 + Y.^2 + Z.^2);
     Vq = interp2(Xg, Yg, V, Xq, Yq, 'cubic');
+    % TE-Position als Referenz speichern, beim drücken set correlation wird
+    % die berechnete 3D Position gespeichert, statt der Ort des
+    % Magnetfeldmaximums
+    if b4.Value == true
 
-    %Kallibrierungsbutton gedrückt
-    if (b4.Value == true)
-        maxX_ref = maxX;
-        maxY_ref = maxY;
-        calibrated = true;
-    
+        if TE_ok
+            O_TE_ref = O_TE;
+            calibrated = true;
+            disp('3D-Referenzposition gespeichert.');
+        else
+          disp('TE-Ortung unzuverlaessig. Referenz nicht gesetzt.');
+        end
+
         b4.Value = false;
+disp('b4 false')
     end
 
     % Maximum
@@ -343,88 +388,100 @@ end
     [maxY, maxX] = ind2sub(size(Vq), maxIndex);
     maxX = maxX / interpolating_factor + (interpolating_factor - 1) / interpolating_factor;
     maxY = maxY / interpolating_factor + (interpolating_factor - 1) / interpolating_factor;
-    
-    %Mapping des Sensorgitters auf das Tracheabild
-    if calibrated
-        dx = maxX - maxX_ref;
-        dy = maxY - maxY_ref;
+disp (calibrated);
+disp(TE_ok);
+  % TE-Position auf das Tracheabild uebertragen
+if ~calibrated
+    px_plot = imageCenterX;
+    py_plot = imageCenterY;
 
-        px_plot = imageCenterX + scale_x * dy;
-        py_plot = imageCenterY - scale_y * dx;
+elseif TE_ok
+    dx = O_TE(1) - O_TE_ref(1);
+    dy = O_TE(2) - O_TE_ref(2);
 
-    else
-        px_plot = imageCenterX;
-        py_plot = imageCenterY;
-    end
+    px_plot = imageCenterX + (scale_x / 6.3) * dy;
+    py_plot = imageCenterY - (scale_y / 6.3) * dx;
+end
 
-  
+
     %Alarmsystemberechnung
     dist = sqrt((px_plot - imageCenterX)^2 +(py_plot - imageCenterY)^2);
-    alarm = dist > r;
-
+    alarm = calibrated && TE_ok && dist > r;
     % Vector data aktualisieren
     set(q1, 'UData', Y, 'VData', X);
-    set(q4, 'UData', Y, 'VData', X, 'WData', Z);
-    set(q5, 'XData', Xq, 'YData', Yq, 'ZData', Vq);
-    set(q51, 'XData', maxX, 'YData', maxY, 'ZData', maxValue);
+   %set(q4, 'UData', Y, 'VData', X, 'WData', Z);
+    title(q4.Parent, sprintf( ...
+       '3D-Ortung: X = %.1f | Y = %.1f | Z = %.1f mm', ...
+      O_TE(1), O_TE(2), O_TE(3)));
+    %set(q5, 'XData', Xq, 'YData', Yq, 'ZData', Vq);
+    %set(q51, 'XData', maxX, 'YData', maxY, 'ZData', maxValue);
     set(q6, 'XData', Xq, 'YData', Yq, 'ZData', Vq);
     set(q61, 'XData', maxX, 'YData', maxY, 'ZData', maxValue);
     %aktualsiere Magnetmaximumpunkt im Plot
     set(h_point,'XData', px_plot, 'YData', py_plot);
+    title(q1.Parent, sprintf( ...
+       '3D-Ortung: X = %.1f | Y = %.1f |', px_plot,py_plot));
 
-    
-if b5.Value == 1
-    b5.String = 'Persistence: On';
+    if b5.Value == 1
+        b5.String = 'Persistence: On';
 
-    % Aktuelle Position zum Verlauf hinzufügen
-    trailPx = [trailPx(2:end), px_plot];
-    trailPy = [trailPy(2:end), py_plot];
+        % Aktuelle Position zum Verlauf hinzufügen
+        trailPx = [trailPx(2:end), px_plot];
+        trailPy = [trailPy(2:end), py_plot];
 
-    % Ältere Punkte kleiner, neueste Punkte größer
-    pointSizes = linspace(5, 60, traillength);
+        % Ältere Punkte kleiner, neueste Punkte größer
+        pointSizes = linspace(5, 60, traillength);
 
-    set(h_trail, ...
-        'XData', trailPx, ...
-        'YData', trailPy, ...
-        'SizeData', pointSizes);
+        set(h_trail, ...
+            'XData', trailPx, ...
+            'YData', trailPy, ...
+            'SizeData', pointSizes);
 
-else
-    b5.String = 'Persistence: Off';
+    else
+        b5.String = 'Persistence: Off';
 
-    % Verlauf ausblenden und zurücksetzen
-    set(h_trail, ...
-        'XData', nan(1, traillength), ...
-        'YData', nan(1, traillength), ...
-        'SizeData', 20 * ones(1, traillength));
+        % Verlauf ausblenden und zurücksetzen
+        set(h_trail, ...
+            'XData', nan(1, traillength), ...
+            'YData', nan(1, traillength), ...
+            'SizeData', 20 * ones(1, traillength));
 
-    trailPx = nan(1, traillength);
-    trailPy = nan(1, traillength);
-end
+        trailPx = nan(1, traillength);
+        trailPy = nan(1, traillength);
+    end
 
-    
+
     drawnow limitrate;
 
     freq = circshift(freq, 1);
     freq(1) = 1 / toc;
     fprintf('Frequency: %f Hz\n', mean(freq));
-    
+
     %Alarmsystem aktion
     if alarm
-    
-    %Circle color to red when alarm
-    set(h_circle, 'FaceColor', 'r');
-    % FOR DEBUGGING set(h_point, 'Color', 'r', 'MarkerSize', 15);
-    % Nur starten wenn:
-    % 1. Alarm gerade neu ist
-    % 2. Kein Sound läuft
+
+        %Ortung gültig, schwarzer Punkt außerhalb des Kreises.
+        set(h_circle, 'FaceColor', 'r');
+        % FOR DEBUGGING set(h_point, 'Color', 'r', 'MarkerSize', 15);
+        % Nur starten wenn:
+        % 1. Alarm gerade neu ist
+        % 2. Kein Sound läuft
         if alarm && strcmp(player.Running, 'off')
             play(player);
         end
 
 
     else
-    %Set circle to green when no alarm
-    set(h_circle, 'FaceColor', [0 1 0]);
+    if calibrated && ~TE_ok
+        % Orange: Magnetposition nicht zuverlässig, Ortung ungültig, tatsächliche Position unbekannt.
+        set(h_circle, 'FaceColor', [1 0.6 0]);
+    else
+        % Gruen: Ortung gültig, schwarzer Punkt innerhalb des Kreises.
+        set(h_circle, 'FaceColor', [0 1 0]);
     end
 
+    if strcmp(player.Running, 'on')
+        stop(player);
+    end
+end
 end
