@@ -37,35 +37,18 @@ fig = figure('Position', [window_x_pos window_y_pos window_width window_height])
 
 % Preparations for plots
 % 2D quiver plot XY
-subplot(2,3,1);
+subplot(2,2,1);
 q1 = quiver(J, I, zeros(8), zeros(8));
 axis equal tight
 xlim([0.5, 8.5]);
 ylim([0.5, 8.5]);
 xlabel('y');
 ylabel('x');
-title('x - y');
+title('Magnetfeldrichtung (X-Y-Ebene)');
 
-% 3D quiver plot XYZ
-subplot(2,3,2);
-q4 = quiver3( ...
-    M, L, N, ...
-    zeros(8), zeros(8), zeros(8), ...
-    'AutoScale', 'on', ...
-    'AutoScaleFactor', 0.4, ...
-    'LineWidth', 1 ...
-    );
-xlim([0.5, 8.5]); ylim([0.5, 8.5]); zlim([0.5, 1.5]);
-xlabel('y');
-ylabel('x');
-zlabel('z');
-camproj('perspective');
-view(20, 60);
-grid on
-title('x - y - z');
 
 % 2D surface plot XYZ
-ax = subplot(2,3,3);
+ax = subplot(2,2,2);
 q6 = surf(Xg, Yg, zeros(8), 'EdgeColor', 'none');
 hold on
 axis auto
@@ -80,26 +63,7 @@ view(2);
 grid on
 title('Absolute Strength');
 
-% 3D surface plot XY
-subplot(2,3,4);
-q5 = surf(Xg, Yg, zeros(8), 'EdgeColor', 'none');
-hold on
-axis auto
-q51 = scatter3(0, 0, 0, 50, 'r', 'filled');
-hold off
-set(gca, 'zscale', 'log');
-xlim([1, 8]); ylim([1, 8]); zlim([1e-1, 10000]);
-xlabel('y');
-ylabel('x');
-zticks([0.1 1 10 100 1000]);
-shading interp;
-camproj('perspective');
-view(20, 60);
-grid on
-title('Absolute Strength');
-
-
-subplot(2,3,[5 6]);
+axTrachea = subplot(2,2,[3 4]);
 img = imread('TracheaV2.jpeg');
 img = rot90(img, 1);
 imshow(img);
@@ -135,12 +99,16 @@ py_plot = startY;
 % Punkt für Magnetmaximum im Tracheaplot px und py getauscht für Korrekte
 % darstellung
 h_point = plot(px_plot, py_plot, 'o', 'MarkerSize', 8, 'LineWidth', 2, 'MarkerEdgeColor', 'k', 'MarkerFaceColor', 'k');
-% Vorbereitungen für Tracheamaximumpunkte speichern (Nachleuchten)
-traillength = 10;
+% Persistence: letzte 30 gueltige Positionen anzeigen
+traillength = 30;
 trailPx = nan(1, traillength);
 trailPy = nan(1, traillength);
-h_trail = scatter(nan, nan, 20, 'k', 'filled');
 
+% Duenne blaue Linie mit kleinen Spurpunkten
+h_trail = plot(nan, nan, '.-', ...
+    'Color', [0 0.45 0.9], ...
+    'LineWidth', 1.5, ...
+    'MarkerSize', 14);
 % Alarm-Kreis
 theta = linspace(0,2*pi,50);
 r = 160; % Erlaubter Radius in Pixeln
@@ -159,7 +127,7 @@ b2 = uicontrol(fig, 'Style', 'togglebutton', 'String', 'Zero');
 b2.Position = [window_width/2-210 10 200 25];
 b3 = uicontrol(fig, 'Style', 'togglebutton', 'String', 'Magnetic Reset & Zero');
 b3.Position = [window_width/2+10 10 200 25];
-b4 = uicontrol(fig, 'Style', 'togglebutton', 'String', 'Set Correlation Point');
+b4 = uicontrol(fig, 'Style', 'togglebutton', 'String', 'Set Reference');
 b4.Position = [window_width/2+230 10 200 25];
 b5 = uicontrol(fig, 'Style', 'togglebutton', 'String', 'Persistence');
 b5.Position = [window_width/2+450 10 160 25];
@@ -409,46 +377,43 @@ end
     alarm = calibrated && TE_ok && dist > r;
     % Vector data aktualisieren
     set(q1, 'UData', Y, 'VData', X);
-   %set(q4, 'UData', Y, 'VData', X, 'WData', Z);
-    title(q4.Parent, sprintf( ...
-       '3D-Ortung: X = %.1f | Y = %.1f | Z = %.1f mm', ...
-      O_TE(1), O_TE(2), O_TE(3)));
-    %set(q5, 'XData', Xq, 'YData', Yq, 'ZData', Vq);
-    %set(q51, 'XData', maxX, 'YData', maxY, 'ZData', maxValue);
     set(q6, 'XData', Xq, 'YData', Yq, 'ZData', Vq);
     set(q61, 'XData', maxX, 'YData', maxY, 'ZData', maxValue);
     %aktualsiere Magnetmaximumpunkt im Plot
     set(h_point,'XData', px_plot, 'YData', py_plot);
-    title(q1.Parent, sprintf( ...
-       '3D-Ortung: X = %.1f | Y = %.1f |', px_plot,py_plot));
+   hTitle = title(axTrachea, { ...
+    'Position des Tubus in der Trachea', ...
+    sprintf('3D-Ortung: X = %.1f | Y = %.1f | Z = %.1f mm', ...
+    O_TE(1), O_TE(2), O_TE(3)) ...
+});
 
-    if b5.Value == 1
-        b5.String = 'Persistence: On';
+hTitle.Units = 'normalized';
+hTitle.Position = [0.5, 1.08, 0];
+   if b5.Value == 1
+    b5.String = 'Persistence: On';
 
-        % Aktuelle Position zum Verlauf hinzufügen
+    % Nur gueltige Magnetpositionen zur Spur hinzufuegen
+    if calibrated && TE_ok
         trailPx = [trailPx(2:end), px_plot];
         trailPy = [trailPy(2:end), py_plot];
-
-        % Ältere Punkte kleiner, neueste Punkte größer
-        pointSizes = linspace(5, 60, traillength);
-
-        set(h_trail, ...
-            'XData', trailPx, ...
-            'YData', trailPy, ...
-            'SizeData', pointSizes);
-
-    else
-        b5.String = 'Persistence: Off';
-
-        % Verlauf ausblenden und zurücksetzen
-        set(h_trail, ...
-            'XData', nan(1, traillength), ...
-            'YData', nan(1, traillength), ...
-            'SizeData', 20 * ones(1, traillength));
-
-        trailPx = nan(1, traillength);
-        trailPy = nan(1, traillength);
     end
+
+    % Bewegungsspur aktualisieren
+    set(h_trail, ...
+        'XData', trailPx, ...
+        'YData', trailPy);
+    else
+    b5.String = 'Persistence: Off';
+
+    % Spur ausblenden
+    set(h_trail, ...
+        'XData', nan(1, traillength), ...
+        'YData', nan(1, traillength));
+
+    % Gespeicherte Spur zuruecksetzen
+    trailPx = nan(1, traillength);
+    trailPy = nan(1, traillength);
+end
 
 
     drawnow limitrate;
